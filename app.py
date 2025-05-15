@@ -23,7 +23,6 @@ if pagas_file and pagar_file and rec_file:
         sep=';',
         parse_dates=['Data pagamento'],
         dayfirst=True,
-        dtype=str,
         low_memory=False
     )
     df_pagar = pd.read_csv(
@@ -31,7 +30,6 @@ if pagas_file and pagar_file and rec_file:
         sep=';',
         parse_dates=['Data vencimento'],
         dayfirst=True,
-        dtype=str,
         low_memory=False
     )
     df_rec = pd.read_csv(
@@ -39,80 +37,71 @@ if pagas_file and pagar_file and rec_file:
         sep=';',
         parse_dates=['Data da baixa', 'Data vencimento'],
         dayfirst=True,
-        dtype=str,
         low_memory=False
     )
 
     # --- Fluxos realizados ---
-    # Pagamentos realizados (usar Valor Líquido)
     out_real = df_pagas[['Data pagamento', 'Valor Líquido']].dropna(subset=['Data pagamento'])
     out_real = out_real.rename(
         columns={'Data pagamento': 'date', 'Valor Líquido': 'amount'}
     )
     out_real['amount'] = (
-        out_real['amount']
-        .str.replace(r"\.", "", regex=True)
-        .str.replace(",", ".")
-        .astype(float)
-        * -1
+        out_real['amount'].str.replace(r"\.", "", regex=True)
+                         .str.replace(",", ".")
+                         .astype(float) * -1
     )
     out_real['type'] = 'Pagamento Realizado'
 
-    # Recebimentos realizados
     in_real = df_rec.dropna(subset=['Data da baixa'])[['Data da baixa', 'Valor da baixa']]
     in_real = in_real.rename(
         columns={'Data da baixa': 'date', 'Valor da baixa': 'amount'}
     )
     in_real['amount'] = (
-        in_real['amount']
-        .str.replace(r"[^0-9,]", "", regex=True)
-        .str.replace(",", ".")
-        .astype(float)
+        in_real['amount'].str.replace(r"[^0-9,]", "", regex=True)
+                         .str.replace(",", ".")
+                         .astype(float)
     )
     in_real['type'] = 'Recebimento Realizado'
 
     # --- Fluxos a realizar ---
-    # Pagamentos a realizar
     out_forecast = df_pagar[['Data vencimento', 'Valor a pagar']]
     out_forecast = out_forecast.rename(
         columns={'Data vencimento': 'date', 'Valor a pagar': 'amount'}
     )
     out_forecast['amount'] = (
-        out_forecast['amount']
-        .str.replace(r"\.", "", regex=True)
-        .str.replace(",", ".")
-        .astype(float)
-        * -1
+        out_forecast['amount'].str.replace(r"\.", "", regex=True)
+                               .str.replace(",", ".")
+                               .astype(float) * -1
     )
     out_forecast['type'] = 'Pagamento a Realizar'
 
-    # Recebimentos a realizar (sem data de baixa)
     rec_forecast = df_rec[df_rec['Data da baixa'].isna()][['Data vencimento', 'Valor original']]
     rec_forecast = rec_forecast.rename(
         columns={'Data vencimento': 'date', 'Valor original': 'amount'}
     )
     rec_forecast['amount'] = (
-        rec_forecast['amount']
-        .str.replace(r"[^0-9,]", "", regex=True)
-        .str.replace(",", ".")
-        .astype(float)
+        rec_forecast['amount'].str.replace(r"[^0-9,]", "", regex=True)
+                                 .str.replace(",", ".")
+                                 .astype(float)
     )
     rec_forecast['type'] = 'Recebimento a Realizar'
 
     # Consolidar fluxos
     df_flow = pd.concat([out_real, in_real, out_forecast, rec_forecast], ignore_index=True)
-    df_flow = df_flow.dropna(subset=['date']).sort_values('date')
+    df_flow = df_flow.dropna(subset=['date'])
+
+    # Garantir que coluna 'date' seja datetime
+    df_flow['date'] = pd.to_datetime(df_flow['date'], dayfirst=True)
+    df_flow = df_flow.sort_values('date')
 
     # Data inicial e saldo inicial
-    primeira_data = df_flow['date'].min().date()
+    primeira_data = df_flow['date'].min().strftime('%Y-%m-%d')
     st.sidebar.write(f"Primeira data identificada: {primeira_data}")
     saldo_inicial = st.sidebar.number_input(
-        f"Saldo de caixa em {primeira_data}",
-        value=0.0,
-        step=0.01
+        f"Saldo de caixa em {primeira_data}", value=0.0, step=0.01
     )
 
-    # Agrupar por dia
+    # Agrupar por dia e preencher datas faltantes
     daily = df_flow.groupby('date')['amount'].sum().reset_index()
     daily = daily.set_index('date').asfreq('D', fill_value=0).reset_index()
     daily['Cumulativo'] = daily['amount'].cumsum() + saldo_inicial
@@ -131,18 +120,12 @@ if pagas_file and pagar_file and rec_file:
 
     # Tabela resumo
     st.subheader('Resumo Diário')
-    resumo = daily.rename(
-        columns={'amount': 'Fluxo Diário', 'Cumulativo': 'Saldo Acumulado'}
-    )
+    resumo = daily.rename(columns={'amount': 'Fluxo Diário', 'Cumulativo': 'Saldo Acumulado'})
     st.dataframe(resumo)
 
     # Detalhamento e filtros
     st.subheader('Detalhamento de Lançamentos')
-    tipos = st.multiselect(
-        'Filtrar por Tipo',
-        options=df_flow['type'].unique(),
-        default=list(df_flow['type'].unique())
-    )
+    tipos = st.multiselect('Filtrar por Tipo', options=df_flow['type'].unique(), default=df_flow['type'].unique())
     df_filt = df_flow[df_flow['type'].isin(tipos)]
     st.dataframe(df_filt)
 
@@ -157,4 +140,6 @@ else:
     st.info('Faça o upload dos três arquivos CSV para visualizar o dashboard.')
 
 
-
+# requirements.txt
+streamlit
+pandas
