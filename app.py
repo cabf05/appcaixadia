@@ -10,18 +10,18 @@ st.markdown(
 )
 
 # Upload de três arquivos
-recebidas_file = st.file_uploader("Contas Recebidas/A Receber (CSV)", type=["csv"], key="recebidas")
+recebidas_file = st.file_uploader(
+    "Contas Recebidas/A Receber (Excel)", type=["xlsx", "xls"], key="recebidas"
+)
 pagas_file = st.file_uploader("Contas Pagas (CSV)", type=["csv"], key="pagas")
 apagar_file = st.file_uploader("Contas a Pagar (CSV)", type=["csv"], key="apagar")
 
 if recebidas_file and pagas_file and apagar_file:
     # Função auxiliar para ler CSV brasileiro com datas
     def read_brazilian_csv(uploaded_file):
-        # Lê cabeçalho para identificar colunas de data
         uploaded_file.seek(0)
         header = pd.read_csv(uploaded_file, sep=';', nrows=0)
         date_cols = [col for col in header.columns if 'Data' in col]
-        # Voltar ponteiro e ler todo o arquivo
         uploaded_file.seek(0)
         return pd.read_csv(
             uploaded_file,
@@ -33,8 +33,28 @@ if recebidas_file and pagas_file and apagar_file:
             infer_datetime_format=True
         )
 
-    # Leitura dos três arquivos
-    df_receb = read_brazilian_csv(recebidas_file)
+    # Função auxiliar para ler Excel brasileiro com datas e valores
+    def read_brazilian_excel(uploaded_file):
+        uploaded_file.seek(0)
+        df = pd.read_excel(uploaded_file, engine='openpyxl', dtype=str)
+        # Identifica colunas de data
+        date_cols = [col for col in df.columns if 'Data' in col]
+        # Converte datas
+        for col in date_cols:
+            df[col] = pd.to_datetime(df[col], dayfirst=True, format="%d/%m/%Y", errors='coerce')
+        # Converte valores numéricos (todas as colunas que contenham 'Valor')
+        value_cols = [col for col in df.columns if 'Valor' in col]
+        for col in value_cols:
+            df[col] = (
+                df[col]
+                .str.replace(r"\.", "", regex=True)
+                .str.replace(",", ".", regex=False)
+                .astype(float)
+            )
+        return df
+
+    # Leitura dos arquivos
+    df_receb = read_brazilian_excel(recebidas_file)
     df_pagas = read_brazilian_csv(pagas_file)
     df_apagar = read_brazilian_csv(apagar_file)
 
@@ -91,4 +111,3 @@ if recebidas_file and pagas_file and apagar_file:
 
     st.subheader("Fluxo de Caixa Diário")
     st.dataframe(df_daily, use_container_width=True)
-
