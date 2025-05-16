@@ -33,27 +33,40 @@ if recebidas_file and pagas_file and apagar_file:
             infer_datetime_format=True
         )
 
-    # Função auxiliar para ler Excel brasileiro com datas e valores
+    # Funções auxiliares para leitura
+    def read_brazilian_csv(uploaded_file):
+        uploaded_file.seek(0)
+        header = pd.read_csv(uploaded_file, sep=';', nrows=0)
+        date_cols = [col for col in header.columns if 'Data' in col]
+        uploaded_file.seek(0)
+        return pd.read_csv(
+            uploaded_file,
+            sep=';',
+            decimal=',',
+            thousands='.',
+            dayfirst=True,
+            parse_dates=date_cols,
+            infer_datetime_format=True
+        )
+
     def read_brazilian_excel(uploaded_file):
         uploaded_file.seek(0)
-        df = pd.read_excel(uploaded_file, engine='openpyxl', dtype=str)
-        # Identifica colunas de data
-        date_cols = [col for col in df.columns if 'Data' in col]
-        # Converte datas
-        for col in date_cols:
-            df[col] = pd.to_datetime(df[col], dayfirst=True, format="%d/%m/%Y", errors='coerce')
-        # Converte valores numéricos (todas as colunas que contenham 'Valor')
-        value_cols = [col for col in df.columns if 'Valor' in col]
-        for col in value_cols:
-            df[col] = (
-                df[col]
-                .str.replace(r"\.", "", regex=True)
-                .str.replace(",", ".", regex=False)
-                .astype(float)
-            )
+        # Lê Excel tratando decimais e milhares
+        df = pd.read_excel(
+            uploaded_file,
+            engine='openpyxl',
+            decimal=',',
+            thousands='.',
+            parse_dates=[col for col in pd.read_excel(uploaded_file, nrows=0).columns if 'Data' in col],
+            dayfirst=True,
+            infer_datetime_format=True
+        )
         return df
 
     # Leitura dos arquivos
+    df_receb = read_brazilian_excel(recebidas_file)
+    df_pagas = read_brazilian_csv(pagas_file)
+    df_apagar = read_brazilian_csv(apagar_file)
     df_receb = read_brazilian_excel(recebidas_file)
     df_pagas = read_brazilian_csv(pagas_file)
     df_apagar = read_brazilian_csv(apagar_file)
@@ -111,3 +124,4 @@ if recebidas_file and pagas_file and apagar_file:
 
     st.subheader("Fluxo de Caixa Diário")
     st.dataframe(df_daily, use_container_width=True)
+
