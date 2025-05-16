@@ -117,8 +117,7 @@ if df_rec is not None and df_paid is not None and df_pay is not None:
         if pay_date_col:
             pay_fluxo = df_pay[[pay_date_col, 'Valor aprop fin']].copy()
             pay_fluxo['Saída'] = (
-                pay_fluxo['Valor aprop fin'].fillna(0) +
-                pay_fluxo['Valor aprop obra'].fillna(0)
+                pay_fluxo['Valor aprop fin'].fillna(0)
             )
             pay_fluxo = pay_fluxo[[pay_date_col, 'Saída']].rename(columns={pay_date_col: 'Data'}).dropna()
         else:
