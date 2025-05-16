@@ -1,107 +1,127 @@
+# app.py
+
 import streamlit as st
 import pandas as pd
+from io import BytesIO
 
 st.set_page_config(page_title="Fluxo de Caixa", layout="wide")
+
 st.title("Sistema de Fluxo de Caixa Diário")
 
-st.markdown(
-    "Antes de fazer o upload, verifique se as datas estão no formato dd/mm/aaaa e os valores no formato brasileiro "
-    "(milhares separados por ponto e decimais por vírgula). Exemplo de data: 30/01/2024; Exemplo de valor: 1.234,56."
-)
-
-# Upload de três arquivos
-recebidas_file = st.file_uploader(
-    "Contas Recebidas/A Receber (Excel)", type=["xlsx", "xls"], key="recebidas"
-)
-pagas_file = st.file_uploader("Contas Pagas (CSV)", type=["csv"], key="pagas")
-apagar_file = st.file_uploader("Contas a Pagar (CSV)", type=["csv"], key="apagar")
-
-if recebidas_file and pagas_file and apagar_file:
-    # Leitura de CSV brasileiro
-    def read_brazilian_csv(uploaded_file):
-        uploaded_file.seek(0)
-        header = pd.read_csv(uploaded_file, sep=';', nrows=0)
-        date_cols = [c for c in header.columns if 'Data' in c]
-        uploaded_file.seek(0)
-        return pd.read_csv(
-            uploaded_file,
-            sep=';',
-            decimal=',',
-            thousands='.',
-            dayfirst=True,
-            parse_dates=date_cols,
-            infer_datetime_format=True
+# --- Funções auxiliares ---
+def parse_file(uploaded, is_excel, dayfirst, dec_br):
+    """Lê e normaliza um arquivo Excel ou CSV."""
+    if uploaded is None:
+        return None
+    # Leitura inicial
+    if is_excel:
+        df = pd.read_excel(uploaded, engine="openpyxl", dtype=str)
+    else:
+        df = pd.read_csv(
+            uploaded,
+            sep=";",
+            dtype=str,
+            decimal="," if dec_br else ".",
+            thousands="." if dec_br else None,
+            dayfirst=dayfirst,
         )
+    # Detectar colunas de data e converter
+    for col in df.columns:
+        if "Data" in col:
+            try:
+                df[col] = pd.to_datetime(df[col], dayfirst=dayfirst, errors="coerce")
+            except:
+                pass
+    # Converter colunas numéricas
+    for col in df.columns:
+        # assumimos colunas de valor pelo nome
+        if any(x in col for x in ["Valor", "Acréscimo", "Desconto", "Seguro", "Taxa"]):
+            s = df[col].astype(str).str.replace(".", "", regex=False) if dec_br else df[col]
+            s = s.str.replace(",", ".", regex=False) if dec_br else s
+            df[col] = pd.to_numeric(s, errors="coerce")
+    return df
 
-    # Leitura de Excel brasileiro: converte datas e valores manualmente
-    def read_brazilian_excel(uploaded_file):
-        uploaded_file.seek(0)
-        # Lê tudo como string para pós-processar
-        df = pd.read_excel(uploaded_file, engine='openpyxl', dtype=str)
-        # Converte colunas de data
-        date_cols = [c for c in df.columns if 'Data' in c]
-        for col in date_cols:
-            df[col] = pd.to_datetime(df[col], format='%d/%m/%Y', dayfirst=True, errors='coerce')
-        # Converte colunas de valor
-        value_cols = [c for c in df.columns if 'Valor' in c]
-        for col in value_cols:
-            df[col] = (
-                df[col]
-                .str.replace(r"\.", "", regex=True)  # remove separador de milhares
-                .str.replace(",", ".", regex=False)   # troca decimal
-                .astype(float, errors='ignore')
-            )
-        return df
+# --- Uploads e opções ---
+st.sidebar.header("Uploads")
+with st.sidebar.expander("1. Contas Recebidas / A Receber"):
+    excel_file = st.file_uploader("Arquivo Excel", type=["xls", "xlsx"], key="rec")
+    rec_date_br = st.checkbox("Datas em formato brasileiro (dd/mm/aaaa)", key="rec_date")
+    rec_val_br = st.checkbox("Valores em formato brasileiro (1.234,56)", key="rec_val")
 
-    # Carrega dados
-    df_receb = read_brazilian_excel(recebidas_file)
-    df_pagas = read_brazilian_csv(pagas_file)
-    df_apagar = read_brazilian_csv(apagar_file)
+with st.sidebar.expander("2. Contas Pagas"):
+    paid_file = st.file_uploader("Arquivo CSV", type=["csv"], key="paid")
+    paid_date_br = st.checkbox("Datas em formato brasileiro (dd/mm/aaaa)", key="paid_date")
+    paid_val_br = st.checkbox("Valores em formato brasileiro (1.234,56)", key="paid_val")
 
-    # Adiciona colunas de tipo e fluxo
-    df_receb['Tipo'] = 'Recebimento'
-    df_receb['Fluxo'] = df_receb.get('Valor líquido', 0)
+with st.sidebar.expander("3. Contas a Pagar"):
+    pay_file = st.file_uploader("Arquivo CSV", type=["csv"], key="pay")
+    pay_date_br = st.checkbox("Datas em formato brasileiro (dd/mm/aaaa)", key="pay_date")
+    pay_val_br = st.checkbox("Valores em formato brasileiro (1.234,56)", key="pay_val")
 
-    df_pagas['Tipo'] = 'Pagamento'
-    df_pagas['Fluxo'] = -df_pagas.get('Valor Líquido', 0)
+# --- Parse ---
+df_rec = parse_file(excel_file, is_excel=True, dayfirst=rec_date_br, dec_br=rec_val_br)
+df_paid = parse_file(paid_file, is_excel=False, dayfirst=paid_date_br, dec_br=paid_val_br)
+df_pay = parse_file(pay_file, is_excel=False, dayfirst=pay_date_br, dec_br=pay_val_br)
 
-    df_apagar['Tipo'] = 'A Pagar'
-    df_apagar['Fluxo'] = -df_apagar.get('Valor a pagar', 0)
+# Mostrar tabelas interativas
+if df_rec is not None:
+    st.subheader("Contas Recebidas / A Receber")
+    st.experimental_data_editor(df_rec, use_container_width=True)
 
-    # Consolida registros
-    df_all = pd.concat([df_receb, df_pagas, df_apagar], ignore_index=True)
+if df_paid is not None:
+    st.subheader("Contas Pagas")
+    st.experimental_data_editor(df_paid, use_container_width=True)
 
-    # Exibe tabela interativa
-    st.subheader("Tabela de Movimentações")
-    st.data_editor(df_all, use_container_width=True)
+if df_pay is not None:
+    st.subheader("Contas a Pagar")
+    st.experimental_data_editor(df_pay, use_container_width=True)
 
-    # Identifica data mais antiga
-    date_cols_all = [c for c in df_all.columns if df_all[c].dtype == 'datetime64[ns]']
-    min_date = df_all[date_cols_all].min().min().date()
-    st.info(f"Data mais antiga encontrada: {min_date.strftime('%d/%m/%Y')}")
+# --- Se todos carregados, fluxo de caixa ---
+if df_rec is not None and df_paid is not None and df_pay is not None:
+    # juntar todas as datas possíveis
+    datas = []
+    for df in [df_rec, df_paid, df_pay]:
+        for col in df.columns:
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                datas.append(df[col].min())
+    data_inicio = min([d for d in datas if pd.notnull(d)])
+    st.markdown(f"**Data inicial detectada:** {data_inicio.date()}")
 
-    # Solicita saldo inicial
     saldo_inicial = st.number_input(
-        f"Informe o saldo de caixa em {min_date.strftime('%d/%m/%Y')}",
-        format="%.2f"
+        f"Saldo de caixa em {data_inicio.date()}", value=0.0, format="%.2f"
     )
 
-    # Cria fluxo de caixa diário
-    df_fluxo = df_all.copy()
-    df_fluxo['Data'] = df_fluxo['Data vencimento'] if 'Data vencimento' in df_fluxo.columns else df_fluxo[date_cols_all[0]]
-    df_daily = (
-        df_fluxo
-        .groupby('Data')
-        .agg(
-            Entradas=('Fluxo', lambda x: x[x > 0].sum()),
-            Saidas=('Fluxo', lambda x: -x[x < 0].sum()),
-            Variacao=('Fluxo', 'sum')
+    if st.button("Gerar Fluxo de Caixa"):
+        # Entradas: usar Data da baixa e Valor da baixa de recebimentos
+        if "Data da baixa" in df_rec.columns and "Valor da baixa" in df_rec.columns:
+            rec_fluxo = df_rec[["Data da baixa", "Valor da baixa"]].dropna()
+            rec_fluxo = rec_fluxo.rename(
+                columns={"Data da baixa": "Data", "Valor da baixa": "Entrada"}
+            )
+        else:
+            rec_fluxo = pd.DataFrame(columns=["Data", "Entrada"])
+
+        # Saídas: usar Data pagamento e Valor Líquido de pagos
+        paid_date_col = next((c for c in df_paid.columns if "Data pagamento" in c), None)
+        paid_val_col = next((c for c in df_paid.columns if "Valor Líquido" in c), None)
+        if paid_date_col and paid_val_col:
+            paid_fluxo = df_paid[[paid_date_col, paid_val_col]].dropna()
+            paid_fluxo = paid_fluxo.rename(
+                columns={paid_date_col: "Data", paid_val_col: "Saída"}
+            )
+        else:
+            paid_fluxo = pd.DataFrame(columns=["Data", "Saída"])
+
+        # Consolidar por dia
+        fluxo = (
+            pd.concat([rec_fluxo, paid_fluxo], axis=0, sort=False)
+            .fillna(0)
+            .groupby("Data", as_index=False)
+            .sum()
         )
-        .reset_index()
-        .sort_values('Data')
-    )
+        fluxo = fluxo.sort_values("Data")
+        fluxo["Variação"] = fluxo["Entrada"] - fluxo["Saída"]
+        fluxo["Saldo Acumulado"] = saldo_inicial + fluxo["Variação"].cumsum()
 
-    df_daily['Saldo Acumulado'] = saldo_inicial + df_daily['Variacao'].cumsum()
-
-    st.subheader("Fluxo de Caixa Diário")
-    st.dataframe(df_daily, use_container_width=True)
+        st.subheader("Fluxo de Caixa Diário")
+        st.dataframe(fluxo, use_container_width=True)
