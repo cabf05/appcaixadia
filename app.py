@@ -2,10 +2,8 @@
 
 import streamlit as st
 import pandas as pd
-from io import BytesIO
 
 st.set_page_config(page_title="Fluxo de Caixa", layout="wide")
-
 st.title("Sistema de Fluxo de Caixa Diário")
 
 # --- Funções auxiliares ---
@@ -23,21 +21,17 @@ def parse_file(uploaded, is_excel, dayfirst, dec_br):
             dtype=str,
             decimal="," if dec_br else ".",
             thousands="." if dec_br else None,
-            dayfirst=dayfirst,
         )
-    # Detectar colunas de data e converter
+    # Converter colunas de data
     for col in df.columns:
         if "Data" in col:
-            try:
-                df[col] = pd.to_datetime(df[col], dayfirst=dayfirst, errors="coerce")
-            except:
-                pass
+            df[col] = pd.to_datetime(df[col], dayfirst=dayfirst, errors="coerce")
     # Converter colunas numéricas
     for col in df.columns:
-        # assumimos colunas de valor pelo nome
         if any(x in col for x in ["Valor", "Acréscimo", "Desconto", "Seguro", "Taxa"]):
-            s = df[col].astype(str).str.replace(".", "", regex=False) if dec_br else df[col]
-            s = s.str.replace(",", ".", regex=False) if dec_br else s
+            s = df[col].astype(str)
+            if dec_br:
+                s = s.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
             df[col] = pd.to_numeric(s, errors="coerce")
     return df
 
@@ -59,67 +53,71 @@ with st.sidebar.expander("3. Contas a Pagar"):
     pay_val_br = st.checkbox("Valores em formato brasileiro (1.234,56)", key="pay_val")
 
 # --- Parse ---
-df_rec = parse_file(excel_file, is_excel=True, dayfirst=rec_date_br, dec_br=rec_val_br)
-df_paid = parse_file(paid_file, is_excel=False, dayfirst=paid_date_br, dec_br=paid_val_br)
-df_pay = parse_file(pay_file, is_excel=False, dayfirst=pay_date_br, dec_br=pay_val_br)
+df_rec  = parse_file(excel_file, is_excel=True,  dayfirst=rec_date_br,  dec_br=rec_val_br)
+df_paid = parse_file(paid_file,   is_excel=False, dayfirst=paid_date_br, dec_br=paid_val_br)
+df_pay  = parse_file(pay_file,    is_excel=False, dayfirst=pay_date_br,  dec_br=pay_val_br)
 
 # Mostrar tabelas interativas
 if df_rec is not None:
     st.subheader("Contas Recebidas / A Receber")
-    st.experimental_data_editor(df_rec, use_container_width=True)
+    st.dataframe(df_rec, use_container_width=True)
 
 if df_paid is not None:
     st.subheader("Contas Pagas")
-    st.experimental_data_editor(df_paid, use_container_width=True)
+    st.dataframe(df_paid, use_container_width=True)
 
 if df_pay is not None:
     st.subheader("Contas a Pagar")
-    st.experimental_data_editor(df_pay, use_container_width=True)
+    st.dataframe(df_pay, use_container_width=True)
 
-# --- Se todos carregados, fluxo de caixa ---
+# --- Fluxo de Caixa ---
 if df_rec is not None and df_paid is not None and df_pay is not None:
-    # juntar todas as datas possíveis
-    datas = []
-    for df in [df_rec, df_paid, df_pay]:
+    # encontrar a data inicial mais antiga
+    all_dates = []
+    for df in (df_rec, df_paid, df_pay):
         for col in df.columns:
             if pd.api.types.is_datetime64_any_dtype(df[col]):
-                datas.append(df[col].min())
-    data_inicio = min([d for d in datas if pd.notnull(d)])
+                all_dates.append(df[col].min())
+    data_inicio = min(d for d in all_dates if pd.notnull(d))
     st.markdown(f"**Data inicial detectada:** {data_inicio.date()}")
 
     saldo_inicial = st.number_input(
-        f"Saldo de caixa em {data_inicio.date()}", value=0.0, format="%.2f"
+        f"Saldo de caixa em {data_inicio.date()}",
+        value=0.0,
+        format="%.2f"
     )
 
     if st.button("Gerar Fluxo de Caixa"):
-        # Entradas: usar Data da baixa e Valor da baixa de recebimentos
+        # Entradas
         if "Data da baixa" in df_rec.columns and "Valor da baixa" in df_rec.columns:
-            rec_fluxo = df_rec[["Data da baixa", "Valor da baixa"]].dropna()
-            rec_fluxo = rec_fluxo.rename(
-                columns={"Data da baixa": "Data", "Valor da baixa": "Entrada"}
+            rec_fluxo = (
+                df_rec[["Data da baixa", "Valor da baixa"]]
+                .dropna()
+                .rename(columns={"Data da baixa": "Data", "Valor da baixa": "Entrada"})
             )
         else:
             rec_fluxo = pd.DataFrame(columns=["Data", "Entrada"])
 
-        # Saídas: usar Data pagamento e Valor Líquido de pagos
+        # Saídas
         paid_date_col = next((c for c in df_paid.columns if "Data pagamento" in c), None)
-        paid_val_col = next((c for c in df_paid.columns if "Valor Líquido" in c), None)
+        paid_val_col  = next((c for c in df_paid.columns if "Valor Líquido"    in c), None)
         if paid_date_col and paid_val_col:
-            paid_fluxo = df_paid[[paid_date_col, paid_val_col]].dropna()
-            paid_fluxo = paid_fluxo.rename(
-                columns={paid_date_col: "Data", paid_val_col: "Saída"}
+            paid_fluxo = (
+                df_paid[[paid_date_col, paid_val_col]]
+                .dropna()
+                .rename(columns={paid_date_col: "Data", paid_val_col: "Saída"})
             )
         else:
             paid_fluxo = pd.DataFrame(columns=["Data", "Saída"])
 
-        # Consolidar por dia
+        # Consolidação
         fluxo = (
-            pd.concat([rec_fluxo, paid_fluxo], axis=0, sort=False)
+            pd.concat([rec_fluxo, paid_fluxo], ignore_index=True)
             .fillna(0)
             .groupby("Data", as_index=False)
             .sum()
+            .sort_values("Data")
         )
-        fluxo = fluxo.sort_values("Data")
         fluxo["Variação"] = fluxo["Entrada"] - fluxo["Saída"]
         fluxo["Saldo Acumulado"] = saldo_inicial + fluxo["Variação"].cumsum()
 
