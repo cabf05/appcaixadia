@@ -86,46 +86,41 @@ if df_rec is not None and df_paid is not None and df_pay is not None:
 
     if st.button("Gerar Fluxo de Caixa"):
         # --- Entradas Recebidas vs A Receber ---
-        # 1) Recebidos efetivos
         mask_rec = df_rec.get('Valor da baixa').notna() & (df_rec['Valor da baixa'] > 0)
         rec_received = (
             df_rec.loc[mask_rec, ['Data da baixa', 'Valor da baixa']]
             .rename(columns={'Data da baixa': 'Data', 'Valor da baixa': 'Entrada'})
             .dropna()
         )
-
-        # 2) A receber (previstos)
         mask_prev = df_rec.get('Valor da baixa').isna() | (df_rec['Valor da baixa'] == 0)
         rec_expected = (
             df_rec.loc[mask_prev, ['Data vencimento', 'Valor devido']]
             .rename(columns={'Data vencimento': 'Data', 'Valor devido': 'Entrada'})
             .dropna()
         )
-
-        # União das entradas
         rec_fluxo = pd.concat([rec_received, rec_expected], ignore_index=True)
 
-        # --- Saídas Efetivas (Contas Pagas) ---
+        # --- Saídas Efetivas (Contas Pagas) com soma de aprop fin + aprop obra ---
         paid_date_col = next((c for c in df_paid.columns if "Data pagamento" in c), None)
-        paid_val_col  = next((c for c in df_paid.columns if "Valor Líquido"    in c), None)
-        if paid_date_col and paid_val_col:
-            paid_fluxo = (
-                df_paid[[paid_date_col, paid_val_col]]
-                .dropna()
-                .rename(columns={paid_date_col: 'Data', paid_val_col: 'Saída'})
+        if paid_date_col:
+            paid_fluxo = df_paid[[paid_date_col, 'Valor aprop fin', 'Valor aprop obra']].copy()
+            paid_fluxo['Saída'] = (
+                paid_fluxo['Valor aprop fin'].fillna(0) +
+                paid_fluxo['Valor aprop obra'].fillna(0)
             )
+            paid_fluxo = paid_fluxo[[paid_date_col, 'Saída']].rename(columns={paid_date_col: 'Data'}).dropna()
         else:
             paid_fluxo = pd.DataFrame(columns=['Data','Saída'])
 
-        # --- Saídas a Realizar (Contas a Pagar) ---
+        # --- Saídas a Realizar (Contas a Pagar) com soma de aprop fin + aprop obra ---
         pay_date_col = next((c for c in df_pay.columns if "Data vencimento" in c), None)
-        pay_val_col  = next((c for c in df_pay.columns if "Valor a pagar"    in c), None)
-        if pay_date_col and pay_val_col:
-            pay_fluxo = (
-                df_pay[[pay_date_col, pay_val_col]]
-                .dropna()
-                .rename(columns={pay_date_col: 'Data', pay_val_col: 'Saída'})
+        if pay_date_col:
+            pay_fluxo = df_pay[[pay_date_col, 'Valor aprop fin']].copy()
+            pay_fluxo['Saída'] = (
+                pay_fluxo['Valor aprop fin'].fillna(0) +
+                pay_fluxo['Valor aprop obra'].fillna(0)
             )
+            pay_fluxo = pay_fluxo[[pay_date_col, 'Saída']].rename(columns={pay_date_col: 'Data'}).dropna()
         else:
             pay_fluxo = pd.DataFrame(columns=['Data','Saída'])
 
@@ -141,7 +136,7 @@ if df_rec is not None and df_paid is not None and df_pay is not None:
               .sort_values('Data')
         )
         fluxo['Variação']         = fluxo['Entrada'] - fluxo['Saída']
-        fluxo['Saldo Acumulado'] = saldo_inicial + fluxo['Variação'].cumsum()
+        fluxo['Saldo Acumulado']  = saldo_inicial + fluxo['Variação'].cumsum()
 
         st.subheader("Fluxo de Caixa Diário Aprimorado")
         st.dataframe(fluxo, use_container_width=True)
