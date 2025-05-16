@@ -1,149 +1,80 @@
-# app.py
 import streamlit as st
 import pandas as pd
-import numpy as np
-from io import StringIO
 
 st.set_page_config(page_title="Fluxo de Caixa", layout="wide")
-st.title("💰 Fluxo de Caixa Realizado e a Realizar")
+st.title("Sistema de Fluxo de Caixa Diário")
 
-# --- Sidebar inputs: file upload or paste CSV ---
-st.sidebar.header("Importar dados")
-uploaded = st.sidebar.file_uploader(
-    "Faça upload de um ou mais CSVs", type=["csv"], accept_multiple_files=True
-)
+st.markdown("Antes de fazer o upload, verifique se as datas estão no formato dd/mm/aaaa e os valores no formato brasileiro (milhares separados por ponto e decimais por vírgula). Exemplo de data: 30/01/2024; Exemplo de valor: 1.234,56.")
 
-paste_area = st.sidebar.checkbox("Não conseguiu fazer upload? Copiar/colar CSV:")
-pasted = None
-if paste_area:
-    pasted = st.sidebar.text_area("Cole o conteúdo CSV aqui", height=200)
+# Upload de três arquivos
+recebidas_file = st.file_uploader("Contas Recebidas/A Receber (CSV)", type=["csv"], key="recebidas")
+pagas_file = st.file_uploader("Contas Pagas (CSV)", type=["csv"], key="pagas")
+apagar_file = st.file_uploader("Contas a Pagar (CSV)", type=["csv"], key="apagar")
 
-if not uploaded and not pasted:
-    st.info("Faça upload de ao menos um CSV de contas pagas ou recebidas, ou cole o conteúdo.")
-    st.stop()
+if recebidas_file and pagas_file and apagar_file:
+    # Leitura dos arquivos com formatos brasileiro
+    df_receb = pd.read_csv(
+        recebidas_file, sep=';', thousands='.', decimal=',', dayfirst=True,
+        parse_dates=[col for col in pd.read_csv(recebidas_file, nrows=0, sep=';').columns if 'Data' in col]
+    )
+    df_pagas = pd.read_csv(
+        pagas_file, sep=';', thousands='.', decimal=',', dayfirst=True,
+        parse_dates=[col for col in pd.read_csv(pagas_file, nrows=0, sep=';').columns if 'Data' in col]
+    )
+    df_apagar = pd.read_csv(
+        apagar_file, sep=';', thousands='.', decimal=',', dayfirst=True,
+        parse_dates=[col for col in pd.read_csv(apagar_file, nrows=0, sep=';').columns if 'Data' in col]
+    )
 
-# --- Normalization functions ---
-def normalize_paid(df):
-    # detect pagamentos by 'Data pagamento' and 'Valor Líquido' or 'Valor a pagar'
-    date_col = next((c for c in df.columns if "Data pagamento" in c), None)
-    amt_col = next((c for c in df.columns if "Valor Líquido" in c), None) \
-        or next((c for c in df.columns if "Valor a pagar" in c), None)
-    if date_col and amt_col:
-        ser = df[amt_col].astype(str).str.replace(r"[^\d,.-]", "", regex=True)
-        ser = ser.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-        return pd.DataFrame({
-            "date": pd.to_datetime(df[date_col], dayfirst=True, errors="coerce"),
-            "amount": ser.astype(float) * -1.0
-        }).dropna(subset=["date"])
-    raise ValueError
+    # Padronizar colunas de data e valores já feito pelo read_csv
 
-def normalize_received(df):
-    # detect recebimentos by 'Data da baixa' and 'Valor da baixa' or 'Valor devido'
-    date_col = next((c for c in df.columns if "Data da baixa" in c), None)
-    amt_col = next((c for c in df.columns if "Valor da baixa" in c), None) \
-        or next((c for c in df.columns if "Valor devido" in c), None)
-    if date_col and amt_col:
-        ser = df[amt_col].astype(str).str.replace(r"[^\d,.-]", "", regex=True)
-        ser = ser.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-        return pd.DataFrame({
-            "date": pd.to_datetime(df[date_col], dayfirst=True, errors="coerce"),
-            "amount": ser.astype(float)
-        }).dropna(subset=["date"])
-    raise ValueError
+    # Adicionar coluna de tipo e valor de fluxo
+    df_receb['Tipo'] = 'Recebimento'
+    df_receb['Fluxo'] = df_receb['Valor líquido']
 
-def try_normalize(df, name):
-    for fn in (normalize_paid, normalize_received):
-        try:
-            out = fn(df)
-            out["source"] = name
-            return out
-        except Exception:
-            continue
-    raise ValueError(f"Falha na detecção de modelo: {name}")
+    df_pagas['Tipo'] = 'Pagamento'
+    df_pagas['Fluxo'] = -df_pagas['Valor Líquido']
 
-# --- Read and normalize all inputs ---
-all_flows = []
-errors = []
+    df_apagar['Tipo'] = 'A Pagar'
+    df_apagar['Fluxo'] = -df_apagar['Valor a pagar']
 
-for f in uploaded:
-    try:
-        df = pd.read_csv(f, sep=None, engine="python", dtype=str)
-        norm = try_normalize(df, f.name)
-        all_flows.append(norm)
-    except Exception as e:
-        errors.append(f"{f.name}: {e}")
+    # Unir todos em uma única tabela
+    df_all = pd.concat([df_receb, df_pagas, df_apagar], ignore_index=True, sort=False)
 
-if pasted:
-    try:
-        df = pd.read_csv(StringIO(pasted), sep=None, engine="python", dtype=str)
-        norm = try_normalize(df, "pasted")
-        all_flows.append(norm)
-    except Exception as e:
-        errors.append(f"Pasted area: {e}")
+    # Mostrar tabela com filtros
+    st.subheader("Tabela de Movimentações")
+    filtered = st.experimental_data_editor(df_all)
 
-if errors:
-    st.sidebar.error("Erros na leitura:\n" + "\n".join(errors))
+    # Encontrar data mais antiga nos movimentos
+    date_cols = [col for col in df_all.columns if df_all[col].dtype == 'datetime64[ns]']
+    min_date = df_all[date_cols].min().min().date()
+    st.info(f"Data mais antiga encontrada: {min_date.strftime('%d/%m/%Y')}")
 
-if not all_flows:
-    st.error("Nenhum arquivo reconhecido. Ajuste o CSV ou use a área de colagem.")
-    st.stop()
+    # Solicitar saldo inicial
+    saldo_inicial = st.number_input(
+        f"Informe o saldo de caixa em {min_date.strftime('%d/%m/%Y')}",
+        format="%.2f"
+    )
 
-flows = pd.concat(all_flows, ignore_index=True)
-flows = flows.sort_values("date")
+    # Construir fluxo de caixa diário
+    df_fluxo = df_all.copy()
+    # Seleciona coluna de data principal (Data vencimento se existir)
+    if 'Data vencimento' in df_fluxo.columns:
+        df_fluxo['Data'] = df_fluxo['Data vencimento']
+    else:
+        df_fluxo['Data'] = df_fluxo[date_cols[0]]
 
-# --- Opening balance input ---
-min_date = flows["date"].min().date()
-st.sidebar.markdown(f"**Data inicial detectada:** {min_date}")
-initial_balance = st.sidebar.number_input(
-    f"Saldo de caixa em {min_date}", value=0.0, step=100.0, format="%.2f"
-)
+    df_fluxo_daily = df_fluxo.groupby('Data').agg(
+        Entradas=('Fluxo', lambda x: x[x > 0].sum()),
+        Saidas=('Fluxo', lambda x: -x[x < 0].sum()),
+        Variação=('Fluxo', 'sum')
+    ).reset_index().sort_values('Data')
 
-# --- Daily aggregates ---
-flows["date"] = flows["date"].dt.date
-daily = flows.groupby("date")["amount"].sum().rename("net_flow").to_frame()
+    # Saldo acumulado
+    df_fluxo_daily['Saldo Acumulado'] = saldo_inicial + df_fluxo_daily['Variação'].cumsum()
 
-# ensure full date range
-full_idx = pd.date_range(min_date, flows["date"].max(), freq="D").date
-daily = daily.reindex(full_idx, fill_value=0.0)
+    st.subheader("Fluxo de Caixa Diário")
+    st.dataframe(df_fluxo_daily)
 
-daily["entries"] = daily["net_flow"].clip(lower=0)
-daily["exits"] = (-daily["net_flow"].clip(upper=0))
-daily["cum_balance"] = initial_balance + daily["net_flow"].cumsum()
-daily["eod_balance"] = daily["cum_balance"]
-daily["cum_variation"] = daily["cum_balance"].diff().fillna(0)
 
-# --- KPIs ---
-total_net = daily["net_flow"].sum()
-min_cum = daily["cum_balance"].min()
-final_bal = daily["cum_balance"].iloc[-1]
 
-st.sidebar.markdown("### KPIs do Período")
-st.sidebar.metric("Resultado líquido", f"R$ {total_net:,.2f}")
-st.sidebar.metric("Mínimo acumulado", f"R$ {min_cum:,.2f}")
-st.sidebar.metric("Saldo final", f"R$ {final_bal:,.2f}")
-
-# --- Charts ---
-st.subheader("Fluxo Diário e Posição Acumulada")
-st.line_chart(daily[["net_flow", "cum_balance"]])
-
-st.subheader("Variação Diária da Posição Acumulada")
-st.line_chart(daily["cum_variation"].to_frame("Variação"))
-
-# --- Summary table (fixed) ---
-st.subheader("Resumo Diário")
-daily_df = daily.reset_index().rename(columns={"index": "date"})
-daily_df = daily_df.rename(columns={
-    "entries": "Entradas",
-    "exits": "Saídas",
-    "eod_balance": "Saldo Fim Dia",
-    "cum_balance": "Saldo Acumulado"
-})
-display_cols = ["date", "Entradas", "Saídas", "Saldo Fim Dia", "Saldo Acumulado"]
-st.dataframe(daily_df[display_cols], width=800)
-
-# --- Raw flows with filtering ---
-st.subheader("Detalhamento de Movimentos")
-sources = flows["source"].unique().tolist()
-sel = st.multiselect("Fonte", sources, default=sources)
-filtered = flows[flows["source"].isin(sel)]
-st.dataframe(filtered.sort_values("date"), width=900)
