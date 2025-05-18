@@ -103,10 +103,9 @@ if df_rec is not None and df_paid is not None and df_pay is not None:
         # --- Saídas Efetivas (Contas Pagas) com soma de aprop fin + aprop obra ---
         paid_date_col = next((c for c in df_paid.columns if "Data pagamento" in c), None)
         if paid_date_col:
-            paid_fluxo = df_paid[[paid_date_col, 'Valor aprop fin', 'Valor aprop obra']].copy()
+            paid_fluxo = df_paid[[paid_date_col, 'Valor aprop fin']].copy()
             paid_fluxo['Saída'] = (
-                paid_fluxo['Valor aprop fin'].fillna(0) +
-                paid_fluxo['Valor aprop obra'].fillna(0)
+                paid_fluxo['Valor aprop fin'].fillna(0)
             )
             paid_fluxo = paid_fluxo[[paid_date_col, 'Saída']].rename(columns={paid_date_col: 'Data'}).dropna()
         else:
