@@ -88,8 +88,8 @@ if df_rec is not None and df_paid is not None and df_pay is not None:
         # --- Entradas Recebidas vs A Receber ---
         mask_rec = df_rec.get('Valor da baixa').notna() & (df_rec['Valor da baixa'] > 0)
         rec_received = (
-            df_rec.loc[mask_rec, ['Data da baixa', 'Valor da baixa']]
-            .rename(columns={'Data da baixa': 'Data', 'Valor da baixa': 'Entrada'})
+            df_rec.loc[mask_rec, ['Data da baixa', 'Valor líquido']]
+            .rename(columns={'Data da baixa': 'Data', 'Valor líquido': 'Entrada'})
             .dropna()
         )
         mask_prev = df_rec.get('Valor da baixa').isna() | (df_rec['Valor da baixa'] == 0)
